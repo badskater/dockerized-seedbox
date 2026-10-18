@@ -1,4 +1,4 @@
-# saizen-docker
+# dockerized-seedbox
 
 Self-hosted Docker Compose stacks for a homelab, designed to run behind
 [Traefik](https://traefik.io/) with [Authelia](https://www.authelia.com/) SSO
@@ -26,6 +26,8 @@ Each directory is an independent stack: `cd` into it, copy `.env.example` to
 
 The fastest path: a Docker web UI backed by Postgres, published directly on
 the host at **http://localhost:3000**. No reverse proxy, no TLS, no DNS.
+Dockhand app data is bind-mounted from `./data` next to the compose file —
+change that folder to wherever you want it.
 
 ```bash
 cd quickstart
@@ -52,14 +54,14 @@ services:
       DATABASE_URL: postgres://dockhand:changeme@postgres:5432/dockhand
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - dockhand_data:/app/data
+      # Change ./data to wherever you want Dockhand app data on the host
+      - ./data:/app/data
     depends_on:
       - postgres
     restart: unless-stopped
 
 volumes:
   postgres_data:
-  dockhand_data:
 ```
 
 **Security note:** mounting `/var/run/docker.sock` grants root-equivalent
