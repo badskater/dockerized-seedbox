@@ -1,0 +1,146 @@
+---
+# Authelia main configuration — SAMPLE
+# Copy to config/configuration.yml next to the compose file, then edit the
+# domains and access rules to match your setup.
+# Docs: https://www.authelia.com/configuration/prologue/introduction/
+#
+# Secrets come from .env via compose env_file — Authelia reads any
+# AUTHELIA_* environment variable as an override of the matching key:
+#   AUTHELIA_SESSION_SECRET          -> session.secret
+#   AUTHELIA_STORAGE_ENCRYPTION_KEY  -> storage.encryption_key
+# Generate each with:  openssl rand -base64 32
+
+server:
+  address: tcp://0.0.0.0:9091
+
+theme: dark
+
+log:
+  level: info
+  format: text
+
+authentication_backend:
+  # Minimal: defaults are argon2id already; no tuning keys that can drift
+  # between Authelia versions. Hashes live in users.yml.
+  file:
+    path: /config/users.yml
+
+identity_validation:
+  reset_password:
+    # Required in current Authelia: signs reset-password JWTs.
+    # Reuses the session secret via env substitution.
+    jwt_secret: '${AUTHELIA_SESSION_SECRET}'
+
+access_control:
+  default_policy: deny
+  rules:
+    # Portal itself — login page must stay reachable unauthenticated
+    - domain: 'id.example.com'
+      policy: bypass
+
+    # --- Admin-only infrastructure ---
+    # subject: inner list = OR, outer list = AND; prefixes group: / user:
+    - domain:
+        - 'traefik.example.com'    # Traefik dashboard
+        - 'whoami.example.com'     # routing test app
+        - 'dockhand.example.com'   # Docker web UI
+        - 'filezilla.example.com'  # browser FileZilla GUI
+      policy: one_factor
+      subject:
+        - 'group:admins'
+
+    # --- Per-user ruTorrent instances ---
+    # user1: admins or user1 group
+    - domain:
+        - 'rutorrent-user1.example.com'
+        - 'rpc-user1.example.com'
+        - 'webdav-user1.example.com'
+      policy: one_factor
+      subject:
+        - 'group:admins'
+        - 'group:user1'
+    # user2: admins or user2 group
+    - domain:
+        - 'rutorrent-user2.example.com'
+        - 'rpc-user2.example.com'
+        - 'webdav-user2.example.com'
+      policy: one_factor
+      subject:
+        - 'group:admins'
+        - 'group:user2'
+    # Shared FTP/SFTP web admin — both user groups
+    - domain:
+        - 'sftp.example.com'
+      policy: one_factor
+      subject:
+        - 'group:admins'
+        - 'group:user1'
+        - 'group:user2'
+
+    # --- Shared media apps ---
+    - domain:
+        - 'qbit.example.com'
+      policy: one_factor
+      subject:
+        - 'group:admins'
+        - 'group:user1'
+        - 'group:user2'
+
+    # Catch-all: any other subdomain — any authenticated user.
+    # First matching rule wins: keep specific rules ABOVE this one.
+    - domain:
+        - 'example.com'
+        - '*.example.com'
+      policy: one_factor
+
+session:
+  cookies:
+    # Cookie scope must match the portal + protected hostnames.
+    - domain: 'example.com'
+      authelia_url: 'https://id.example.com'
+      default_redirection_url: 'https://example.com'
+      # Idle timeout: session dies 1h after last activity (sliding)
+      expiration: '1h'
+      # -1 disables "Remember Me" -> cookie is browser-session only:
+      # closing the browser logs out. (Per-TAB logout is impossible;
+      # cookies are browser-scoped, not tab-scoped.) Key renamed from
+      # remember_me_duration in 4.38.
+      remember_me: -1
+      # Inactivity also caps absolute session length
+      inactivity: '30m'
+  # Secret comes from AUTHELIA_SESSION_SECRET (.env)
+
+storage:
+  # SQLite keeps everything in /config — no extra DB container
+  local:
+    path: /config/db.sqlite3
+  # Encryption key comes from AUTHELIA_STORAGE_ENCRYPTION_KEY (.env)
+
+totp:
+  disable: false
+
+webauthn:
+  disable: false
+
+notifier:
+  # Filesystem notifier: password-reset links land in /config/notification.txt
+  # (swap for smtp when you have a mail server configured)
+  filesystem:
+    filename: /config/notification.txt
+
+# --- Optional: OIDC provider (enable when an app needs it) ---
+# Requires AUTHELIA_IDENTITY_PROVIDERS_OIDC_HMAC_SECRET in .env and a
+# client secret per app generated with:
+#   docker exec authelia authelia crypto hash generate pbkdf2 --variant sha512 --random --random.length 72
+# identity_providers:
+#   oidc:
+#     hmac_secret: '${AUTHELIA_IDENTITY_PROVIDERS_OIDC_HMAC_SECRET}'
+#     clients:
+#       - client_id: myapp
+#         client_name: My App
+#         client_secret: '$pbkdf2-sha512$...generated hash...'
+#         public: false
+#         authorization_policy: one_factor
+#         redirect_uris:
+#           - https://myapp.example.com/oauth2/callback
+#         scopes: [openid, profile, email, groups]

@@ -1,0 +1,42 @@
+---
+# Authelia file-based user database — SAMPLE
+# Copy to config/users.yml next to configuration.yml.
+#
+# Passwords are Argon2id hashes. Generate one with the container running:
+#
+#   docker exec authelia authelia crypto hash generate argon2id --password 'YourStrongPassword'
+#
+# Then paste the $argon2id$... output below. NEVER store plain passwords here.
+#
+# The template hash below is INVALID on purpose so nobody can log in
+# until you replace it.
+#
+# Group names here must match the `group:...` subjects in the
+# access_control rules of configuration.yml (admins / user1 / user2 below).
+
+users:
+  admin:
+    displayname: "Admin"
+    # Replace with your generated hash:
+    password: "$argo…HASE"
+    email: admin@example.com
+    groups:
+      - admins
+
+  # Example per-user account — member of 'user1', NOT 'admins'.
+  # Matches the rutorrent-user1 rules in configuration.sample.yml:
+  # user1 can reach their own ruTorrent/rpc/webdav and the shared
+  # sftp + qbittorrent apps, but not the admin-only infrastructure.
+  # user1:
+  #   displayname: "User One"
+  #   password: "$argon2id$...generated hash..."
+  #   email: user1@example.com
+  #   groups:
+  #     - user1
+
+  # user2:
+  #   displayname: "User Two"
+  #   password: "$argon2id$...generated hash..."
+  #   email: user2@example.com
+  #   groups:
+  #     - user2

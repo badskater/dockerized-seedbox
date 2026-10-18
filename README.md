@@ -133,9 +133,25 @@ the Authelia portal once step 3 is done.
 cd authelia
 cp .env.example .env
 # fill in: PORTAL_HOST (e.g. id.example.com), storage/JWT secrets per the
-# comments, and create configuration.yml (users + access_control rules)
+# comments (openssl rand -base64 32)
+mkdir -p config
+cp config/configuration.sample.yml config/configuration.yml
+cp config/users.sample.yml config/users.yml
+# edit both: your domains in configuration.yml, argon2id password hashes
+# in users.yml (generate: docker exec authelia authelia crypto hash
+# generate argon2id --password 'YourStrongPassword')
 docker compose up -d
 ```
+
+Sample configs in `config/`:
+
+- `configuration.sample.yml` — full working layout: file auth backend,
+  bypass rule for the portal, admin-only infra (traefik dashboard, dockhand,
+  filezilla), per-user ruTorrent rules (`group:user1` / `group:user2`), shared
+  sftp/qbittorrent rules, catch-all, session cookie scoping with idle timeout,
+  SQLite storage, filesystem notifier, and a commented OIDC provider block
+- `users.sample.yml` — argon2id user database with an intentionally invalid
+  template hash and example user1/user2 accounts matching the access rules
 
 Gotchas baked into this stack:
 
