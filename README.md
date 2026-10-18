@@ -71,6 +71,80 @@ with TLS and Authelia in front. Change `changeme` before deploying.
 
 ---
 
+## Migrating from the quickstart to the full setup
+
+The quickstart gets you a working Dockhand in minutes; the full setup adds
+TLS, SSO, and the rest of the stack. The migration order matters — Dockhand
+is your deployment tool, so it moves **last**.
+
+### 1) Deploy the quickstart Dockhand
+
+```bash
+cd quickstart
+docker compose up -d
+```
+
+Dockhand is now on `http://<host>:3000`. Point `DATA_DIR` (the `./data`
+bind mount) at a permanent location before you invest in it — everything
+Dockhand knows about your stacks lives there.
+
+### 2) Build all other services in order through Dockhand's stack manager
+
+Use the Dockhand UI (Stacks) to deploy the remaining stacks, one at a time,
+in dependency order. For each: clone/copy the stack folder here, fill in its
+`.env` from `.env.example`, then deploy and verify before moving on.
+
+1. `traefik` — needs the `proxy` network first (`docker network create proxy`)
+   and your Cloudflare token; verify certs issue (`curl -sI https://whoami.<your-domain>`)
+2. `authelia` — must be up before any router references `authelia@docker`;
+   copy the sample configs into `config/` first (see Full setup step 3)
+3. App stacks: `qbittorrent`, `rutorrent-user1`, `rutorrent-user2`, `sftpgo`,
+   `filezilla` — each gets its own `.env` and an Authelia access rule
+
+The quickstart Dockhand stays on plain port 3000 the whole time — it's the
+builder, not yet part of the proxied estate.
+
+### 3) Move Dockhand to the full compose with Authelia + Traefik
+
+When everything else runs, switch Dockhand itself over:
+
+```bash
+cd ../dockhand
+cp .env.example .env   # DOCKHAND_HOST, POSTGRES_PASSWORD, DATA_DIR...
+docker compose up -d
+```
+
+The full stack differs from the quickstart: no host-published port (Traefik
+only), its own Postgres on a private `backend` network, and the optional
+`authelia@docker` middleware label. To keep your existing Dockhand data,
+point `DATA_DIR` at the quickstart's `./data` folder — but note the
+quickstart's Postgres volume does **not** carry over automatically; if you
+want to keep quickstart state, migrate with `pg_dump`/`pg_restore` or accept
+re-registering your stacks. Then tear down the quickstart:
+
+```bash
+cd ../quickstart && docker compose down
+```
+
+### 4) Restart Dockhand through the CLI — it will crash from the IP/config change
+
+Expect the Dockhand container to crash-loop right after the move: it changed
+networks (its container IP changes), and its database/config now reflects a
+different deployment. Don't debug it through the UI — you no longer have one.
+From the host CLI:
+
+```bash
+cd dockhand
+docker compose down
+docker compose up -d
+docker compose logs -f dockhand   # watch it come up clean
+```
+
+Once healthy, reach it at `https://<DOCKHAND_HOST>` through Traefik, log in
+via the Authelia portal, and confirm every stack still shows up.
+
+---
+
 ## Full setup — Traefik + Authelia + app stacks
 
 ### Architecture
