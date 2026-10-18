@@ -1,11 +1,11 @@
 ---
-name: rutorrent-saizen
+name: rutorrent-user2
 
 services:
-  rutorrent-saizen:
+  rutorrent-user2:
     image: crazymax/rtorrent-rutorrent:latest
-    container_name: rutorrent-saizen
-    hostname: rutorrent-saizen
+    container_name: rutorrent-user2
+    hostname: rutorrent-user2
     restart: unless-stopped
     # Give rTorrent time to save session state on shutdown (stale lockfile otherwise)
     stop_grace_period: 120s
@@ -81,7 +81,7 @@ services:
   # GeoIP plugin. Start with:  docker compose --profile geoip up -d
   geoip-updater:
     image: crazymax/geoip-updater:latest
-    container_name: geoip-updater-saizen
+    container_name: geoip-updater-user2
     restart: unless-stopped
     profiles:
       - geoip
@@ -92,7 +92,7 @@ services:
     env_file:
       - .env
     depends_on:
-      - rutorrent-saizen
+      - rutorrent-user2
 
 networks:
   # External network shared with your existing Traefik stack.

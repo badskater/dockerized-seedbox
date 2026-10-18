@@ -1,11 +1,11 @@
 ---
-name: rutorrent-orphan
+name: rutorrent-user1
 
 services:
-  rutorrent-orphan:
+  rutorrent-user1:
     image: crazymax/rtorrent-rutorrent:latest
-    container_name: rutorrent-orphan
-    hostname: rutorrent-orphan
+    container_name: rutorrent-user1
+    hostname: rutorrent-user1
     restart: unless-stopped
     # Give rTorrent time to save session state on shutdown (stale lockfile otherwise)
     stop_grace_period: 120s
@@ -81,7 +81,7 @@ services:
   # GeoIP plugin. Start with:  docker compose --profile geoip up -d
   geoip-updater:
     image: crazymax/geoip-updater:latest
-    container_name: geoip-updater-orphan
+    container_name: geoip-updater-user1
     restart: unless-stopped
     profiles:
       - geoip
@@ -92,7 +92,7 @@ services:
     env_file:
       - .env
     depends_on:
-      - rutorrent-orphan
+      - rutorrent-user1
 
 networks:
   # External network shared with your existing Traefik stack.

@@ -14,8 +14,8 @@ Each directory is an independent stack: `cd` into it, copy `.env.example` to
 ├── authelia/            # SSO portal (forwardAuth middleware for all stacks)
 ├── dockhand/            # Docker web UI (Traefik-routed, postgres-backed)
 ├── qbittorrent/         # Torrent client + WebUI (behind Authelia)
-├── rutorrent-saizen/    # rTorrent + ruTorrent (main instance)
-├── rutorrent-orphan/    # rTorrent + ruTorrent (2nd instance, offset ports)
+├── rutorrent-user1/    # rTorrent + ruTorrent (main instance)
+├── rutorrent-user2/    # rTorrent + ruTorrent (2nd instance, offset ports)
 ├── sftpgo/              # SFTP / WebDAV / FTP server with web admin
 └── filezilla/           # FileZilla desktop GUI in the browser (Selkies)
 ```
@@ -159,15 +159,15 @@ Same pattern for each: `cp .env.example .env`, edit, `docker compose up -d`.
 |---|---|---|
 | `dockhand/` | `DOCKHAND_HOST` | Postgres runs on a private `backend` network, never exposed. Set `POSTGRES_PASSWORD`. Optional Authelia middleware label is commented in the compose file. |
 | `qbittorrent/` | `SUBDOMAIN` etc. | WebUI router already has `middlewares=authelia@docker`. BT ports are published on the host — forward them on your router. |
-| `rutorrent-saizen/` | `RUTORRENT_HOST`, `WEBDAV_HOST`, `XMLRPC_HOST` | Main instance: BT 50000/tcp + 6881/udp, internal 8000/8080/9000. Optional `geoip` profile service. |
-| `rutorrent-orphan/` | same var names | Second instance, fully renamed and port-shifted: BT **51000/tcp + 6882/udp**, internal 8100/8180/9100. Forward both port pairs separately. |
+| `rutorrent-user1/` | `RUTORRENT_HOST`, `WEBDAV_HOST`, `XMLRPC_HOST` | Instance 1: BT 50000/tcp + 6881/udp, internal 8000/8080/9000. Optional `geoip` profile service. |
+| `rutorrent-user2/` | same var names | Instance 2, fully renamed and port-shifted: BT **51000/tcp + 6882/udp**, internal 8100/8180/9100. Forward both port pairs separately. |
 | `sftpgo/` | `SFTPGO_HOST` | SFTP :2022, WebDAV :8081, web admin via Traefik. Host dirs must be owned by uid/gid 1000 or sqlite crash-loops. Never name compose-only vars `SFTPGO_*` — they'd hijack app config (host paths use `SFTPGO_HOST_*`). |
 | `filezilla/` | `FILEZILLA_HOST` | Browser-streamed desktop GUI. **The in-GUI terminal has passwordless sudo** — put `authelia@docker` in front (strongly recommended) and/or set `CUSTOM_USER`/`PASSWORD`. |
 
 ### Running the two ruTorrent instances side by side
 
 They are fully decoupled: separate compose project names, container names
-(`rutorrent-saizen` / `rutorrent-orphan`), router names, hostnames, BT ports,
+(`rutorrent-user1` / `rutorrent-user2`), router names, hostnames, BT ports,
 and volume paths (relative to each stack's own directory). Just make sure the
 `.env` of each points `*_HOST` at real DNS records and forward both BT port
 pairs (50000/tcp, 6881/udp **and** 51000/tcp, 6882/udp) on your router.
