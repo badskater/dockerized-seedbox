@@ -1,0 +1,38 @@
+---
+services:
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:5.2.4
+    container_name: qbittorrent
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
+      - WEBUI_PORT=8080
+      - TORRENTING_PORT=${TORRENTING_PORT}
+    volumes:
+      - ${CONFIG_PATH}:/config
+      - ${DOWNLOADS_PATH}:/downloads #optional
+    ports:
+      - ${TORRENTING_PORT}:${TORRENTING_PORT}
+      - ${TORRENTING_PORT}:${TORRENTING_PORT}/udp
+    networks:
+      - proxy
+    labels:
+      # Enable Traefik for this container
+      - traefik.enable=true
+      # HTTP router: send ${SUBDOMAIN}.${DOMAIN} to the WebUI
+      - traefik.http.routers.qbittorrent.rule=Host(`${SUBDOMAIN}.${DOMAIN}`)
+      - traefik.http.routers.qbittorrent.entrypoints=websecure
+      - traefik.http.routers.qbittorrent.tls.certresolver=letsencrypt
+      # Service: point Traefik at the WebUI port inside the container
+      - traefik.http.services.qbittorrent.loadbalancer.server.port=8080
+      # Authelia portal login (forwardAuth) — browser WebUI only
+      - traefik.http.routers.qbittorrent.middlewares=authelia@docker
+      # Attach to the shared proxy network (adjust to your Traefik network name)
+      - traefik.docker.network=proxy
+    stop_grace_period: 10s #optional
+    restart: unless-stopped
+
+networks:
+  proxy:
+    external: true

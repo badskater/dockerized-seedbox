@@ -1,0 +1,102 @@
+---
+name: rutorrent-saizen
+
+services:
+  rutorrent-saizen:
+    image: crazymax/rtorrent-rutorrent:latest
+    container_name: rutorrent-saizen
+    hostname: rutorrent-saizen
+    restart: unless-stopped
+    # Give rTorrent time to save session state on shutdown (stale lockfile otherwise)
+    stop_grace_period: 120s
+    networks:
+      - proxy
+    # All app configuration comes from .env via env_file
+    env_file:
+      - .env
+    ports:
+      # BitTorrent peer traffic + DHT — published on the host,
+      # forward these on your router/firewall.
+      # Must match RT_INC_PORT / RT_DHT_PORT in .env
+      - target: ${RT_INC_PORT}
+        published: ${RT_INC_PORT}
+        protocol: tcp
+      - target: ${RT_DHT_PORT}
+        published: ${RT_DHT_PORT}
+        protocol: udp
+    expose:
+      # Web ports reached only through Traefik, never published on the host.
+      # Note: port p+1 of each is reserved internally for health checks.
+      - "${XMLRPC_PORT}"
+      - "${RUTORRENT_PORT}"
+      - "${WEBDAV_PORT}"
+    volumes:
+      - ${DATA_DIR:-./data}:/data
+      - ${DOWNLOADS_DIR:-./downloads}:/downloads
+      - ${PASSWD_DIR:-./passwd}:/passwd
+      - ${GEOIP_DATA_DIR:-./data/geoip}:/data/geoip:ro
+    labels:
+      - traefik.enable=true
+      # --- ruTorrent web UI ---
+      - traefik.http.routers.${ROUTER_NAME:-rutorrent}.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}
+      - traefik.http.routers.${ROUTER_NAME:-rutorrent}.rule=Host(`${RUTORRENT_HOST:?set RUTORRENT_HOST}`)
+      - traefik.http.routers.${ROUTER_NAME:-rutorrent}.service=${ROUTER_NAME:-rutorrent}
+      - traefik.http.routers.${ROUTER_NAME:-rutorrent}.tls=true
+      - traefik.http.routers.${ROUTER_NAME:-rutorrent}.tls.certresolver=${CERT_RESOLVER:-letsencrypt}
+      - traefik.http.routers.${ROUTER_NAME:-rutorrent}.tls.domains[0].main=${RUTORRENT_HOST}
+      - traefik.http.services.${ROUTER_NAME:-rutorrent}.loadbalancer.server.port=${RUTORRENT_PORT:-8080}
+      # Optional middleware chain: add manually, e.g.
+      #   traefik.http.routers.<router-name>.middlewares=authelia@docker
+      # (an EMPTY middlewares label errors on Traefik v3)
+      # --- WebDAV (completed downloads) ---
+      - traefik.http.routers.${WEBDAV_ROUTER_NAME:-rutorrent-webdav}.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}
+      - traefik.http.routers.${WEBDAV_ROUTER_NAME:-rutorrent-webdav}.rule=Host(`${WEBDAV_HOST:?set WEBDAV_HOST}`)
+      - traefik.http.routers.${WEBDAV_ROUTER_NAME:-rutorrent-webdav}.service=${WEBDAV_ROUTER_NAME:-rutorrent-webdav}
+      - traefik.http.routers.${WEBDAV_ROUTER_NAME:-rutorrent-webdav}.tls=true
+      - traefik.http.routers.${WEBDAV_ROUTER_NAME:-rutorrent-webdav}.tls.certresolver=${CERT_RESOLVER:-letsencrypt}
+      - traefik.http.routers.${WEBDAV_ROUTER_NAME:-rutorrent-webdav}.tls.domains[0].main=${WEBDAV_HOST}
+      - traefik.http.services.${WEBDAV_ROUTER_NAME:-rutorrent-webdav}.loadbalancer.server.port=${WEBDAV_PORT:-9000}
+      # --- XMLRPC (remote rTorrent control) ---
+      - traefik.http.routers.${XMLRPC_ROUTER_NAME:-rutorrent-rpc}.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}
+      - traefik.http.routers.${XMLRPC_ROUTER_NAME:-rutorrent-rpc}.rule=Host(`${XMLRPC_HOST:?set XMLRPC_HOST}`)
+      - traefik.http.routers.${XMLRPC_ROUTER_NAME:-rutorrent-rpc}.service=${XMLRPC_ROUTER_NAME:-rutorrent-rpc}
+      - traefik.http.routers.${XMLRPC_ROUTER_NAME:-rutorrent-rpc}.tls=true
+      - traefik.http.routers.${XMLRPC_ROUTER_NAME:-rutorrent-rpc}.tls.certresolver=${CERT_RESOLVER:-letsencrypt}
+      - traefik.http.routers.${XMLRPC_ROUTER_NAME:-rutorrent-rpc}.tls.domains[0].main=${XMLRPC_HOST}
+      - traefik.http.services.${XMLRPC_ROUTER_NAME:-rutorrent-rpc}.loadbalancer.server.port=${XMLRPC_PORT:-8000}
+    ulimits:
+      nproc: 65535
+      nofile:
+        soft: 32000
+        hard: 40000
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  # Optional companion: refreshes MaxMind GeoIP2 databases used by ruTorrent's
+  # GeoIP plugin. Start with:  docker compose --profile geoip up -d
+  geoip-updater:
+    image: crazymax/geoip-updater:latest
+    container_name: geoip-updater-saizen
+    restart: unless-stopped
+    profiles:
+      - geoip
+    networks:
+      - proxy
+    volumes:
+      - ${GEOIP_DATA_DIR:-./data/geoip}:/data
+    env_file:
+      - .env
+    depends_on:
+      - rutorrent-saizen
+
+networks:
+  # External network shared with your existing Traefik stack.
+  # Create once:  docker network create proxy
+  proxy:
+    name: ${TRAEFIK_NETWORK:-proxy}
+    external: true

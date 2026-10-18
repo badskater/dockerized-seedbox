@@ -1,0 +1,91 @@
+---
+name: dockhand
+
+services:
+  dockhand:
+    image: fnsys/dockhand:latest
+    container_name: dockhand
+    hostname: dockhand
+    restart: unless-stopped
+    networks:
+      - proxy
+      - backend
+    # All app configuration comes from .env via env_file
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-dockhand}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-dockhand}
+    # Web UI reached only through Traefik, never published on the host.
+    expose:
+      - "${DOCKHAND_PORT:-3000}"
+    volumes:
+      # Dockhand manages Docker directly — the socket mount is required.
+      # Note: this grants root-equivalent access to the host; keep the UI
+      # behind authentication (Dockhand's own login, or authelia@docker below).
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DATA_DIR:-./data}:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.${ROUTER_NAME:-dockhand}.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}
+      - traefik.http.routers.${ROUTER_NAME:-dockhand}.rule=Host(`${DOCKHAND_HOST:?set DOCKHAND_HOST}`)
+      - traefik.http.routers.${ROUTER_NAME:-dockhand}.service=${ROUTER_NAME:-dockhand}
+      - traefik.http.routers.${ROUTER_NAME:-dockhand}.tls=true
+      - traefik.http.routers.${ROUTER_NAME:-dockhand}.tls.certresolver=${CERT_RESOLVER:-letsencrypt}
+      - traefik.http.routers.${ROUTER_NAME:-dockhand}.tls.domains[0].main=${DOCKHAND_HOST}
+      - traefik.http.services.${ROUTER_NAME:-dockhand}.loadbalancer.server.port=${DOCKHAND_PORT:-3000}
+      # Optional: put the shared Authelia portal in front as well, e.g.
+      #   traefik.http.routers.${ROUTER_NAME:-dockhand}.middlewares=authelia@docker
+      # (an EMPTY middlewares label errors on Traefik v3)
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: dockhand-postgres
+    hostname: dockhand-postgres
+    restart: unless-stopped
+    networks:
+      - backend
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dockhand}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-dockhand}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dockhand} -d ${POSTGRES_DB:-dockhand}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+networks:
+  # External network shared with the existing Traefik stack.
+  # Create once:  docker network create proxy
+  proxy:
+    name: ${TRAEFIK_NETWORK:-proxy}
+    external: true
+  # Private network for app<->database traffic only; not reachable
+  # from Traefik or the host.
+  backend:
+    internal: true
+
+volumes:
+  postgres_data:

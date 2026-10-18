@@ -1,0 +1,72 @@
+---
+name: filezilla
+
+services:
+  filezilla:
+    image: lscr.io/linuxserver/filezilla:${IMAGE_TAG:-latest}
+    container_name: filezilla
+    hostname: filezilla
+    restart: unless-stopped
+    networks:
+      - proxy
+    # Selkies-based image (streams a desktop GUI to the browser) — the
+    # shared-memory size is required for the video pipeline.
+    shm_size: ${SHM_SIZE:-1gb}
+    # All app configuration comes from .env via env_file
+    env_file:
+      - .env
+    environment:
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      TZ: ${TZ:-Etc/UTC}
+    expose:
+      # Web ports reached only through Traefik, never published on the host.
+      # 3000 = HTTP (exists only to sit behind a reverse proxy)
+      # 3001 = HTTPS (image's own self-signed cert; not needed via Traefik)
+      - "${FILEZILLA_PORT:-3000}"
+    volumes:
+      # Config: FileZilla settings, site manager, session state
+      - ${CONFIG_DIR:-./config}:/config
+      # Files to browse/upload/download — mount your storage here
+      - ${DATA_DIR:-./data}:/data
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.${ROUTER_NAME:-filezilla}.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}
+      - traefik.http.routers.${ROUTER_NAME:-filezilla}.rule=Host(`${FILEZILLA_HOST:?set FILEZILLA_HOST}`)
+      - traefik.http.routers.${ROUTER_NAME:-filezilla}.service=${ROUTER_NAME:-filezilla}
+      - traefik.http.routers.${ROUTER_NAME:-filezilla}.tls=true
+      - traefik.http.routers.${ROUTER_NAME:-filezilla}.tls.certresolver=${CERT_RESOLVER:-letsencrypt}
+      - traefik.http.routers.${ROUTER_NAME:-filezilla}.tls.domains[0].main=${FILEZILLA_HOST}
+      - traefik.http.services.${ROUTER_NAME:-filezilla}.loadbalancer.server.port=${FILEZILLA_PORT:-3000}
+      # SECURITY: the web GUI includes a terminal with passwordless sudo —
+      # anyone who reaches it is root inside the container. Put the shared
+      # Authelia portal in front (strongly recommended for anything beyond a
+      # fully trusted LAN), and/or set CUSTOM_USER/PASSWORD in .env:
+      #   traefik.http.routers.filezilla.middlewares=authelia@docker
+      # (an EMPTY middlewares label errors on Traefik v3)
+    healthcheck:
+      # The HTTP port (3000) is the proxied one — plain TCP probe, the image
+      # serves a redirect there and busybox-style tools are available.
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:${FILEZILLA_PORT:-3000}/ || wget -q --spider http://127.0.0.1:${FILEZILLA_PORT:-3000}/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    # Optional GPU acceleration (Intel/AMD): add the device and the image
+    # auto-detects it. See https://docs.linuxserver.io/selkies/user-guide/gpu/
+    # devices:
+    #   - /dev/dri:/dev/dri
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+networks:
+  # External network shared with your existing Traefik stack.
+  # Create once:  docker network create proxy
+  proxy:
+    name: ${TRAEFIK_NETWORK:-proxy}
+    external: true

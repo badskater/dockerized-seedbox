@@ -1,0 +1,110 @@
+---
+name: sftpgo
+
+services:
+  sftpgo:
+    image: drakkan/sftpgo:${SFTPGO_IMAGE_TAG:-v2.7.6}
+    container_name: sftpgo
+    hostname: sftpgo
+    restart: unless-stopped
+    networks:
+      - proxy
+    # Do NOT set `user:` here — the official image already runs as uid/gid
+    # 1000 (user "sftpgo", per its Dockerfile). The host dirs mounted below
+    # MUST be writable by uid 1000 or sqlite cannot create its DB and the
+    # container crash-loops with "unable to open database file".
+    # Fix on the host:  sudo chown -R 1000:1000 <SFTPGO_HOST_CONFIG_DIR> <SFTPGO_HOST_DATA_DIR>
+    # All app configuration comes from .env via env_file.
+    # WARNING: env_file passes EVERY variable into the container, so never
+    # name compose-only variables with the SFTPGO_ prefix — SFTPGO_CONFIG_DIR
+    # is a real SFTPGo setting (config dir override) and would hijack the
+    # container's config dir to a host-only path. Host paths use the
+    # SFTPGO_HOST_* prefix below for exactly this reason.
+    # (SFTPGO_* variables override any sftpgo.json setting; see
+    #  https://docs.sftpgo.com/latest/env-vars/)
+    env_file:
+      - .env
+    environment:
+      # --- Web UI / REST API (HTTP) — reached only through Traefik ---
+      - SFTPGO_HTTPD__BINDINGS__0__PORT=${SFTPGO_HTTP_PORT:-8080}
+      # Bind address: leave EMPTY (all interfaces). This is the IP/interface
+      # to listen on, NOT the public hostname — setting it to ${SFTPGO_HOST}
+      # fails with "cannot assign requested address" because that DNS-resolved
+      # IP doesn't exist inside the container. Traefik routes by container
+      # name on the proxy network; the hostname is only used in router labels.
+      - SFTPGO_HTTPD__BINDINGS__0__ADDRESS=
+      # --- SFTP service ---
+      - SFTPGO_SFTPD__BINDINGS__0__PORT=${SFTPGO_SFTP_PORT:-2022}
+      # --- WebDAV service ---
+      - SFTPGO_WEBDAVD__BINDINGS__0__PORT=${SFTPGO_WEBDAV_PORT:-8081}
+      # --- FTP service (disabled by default; enable in .env) ---
+      - SFTPGO_FTPD__BINDINGS__0__PORT=${SFTPGO_FTP_PORT:-2021}
+      # Allow existing connections to finish on container stop
+      # (docker's stop_grace_period below must be >= this value)
+      - SFTPGO_GRACE_TIME=${SFTPGO_GRACE_TIME:-30}
+    ports:
+      # SFTP is not HTTP — Traefik cannot serve it here, so publish on the
+      # host. Must match SFTPGO_SFTP_PORT above.
+      - target: ${SFTPGO_SFTP_PORT:-2022}
+        published: ${SFTPGO_SFTP_PORT:-2022}
+        protocol: tcp
+      # FTP control + passive port range — only needed when FTP is enabled
+      # in .env (SFTPGO_FTPD__BINDINGS__0__PORT / passive range / force_passive_ip).
+      # - target: ${SFTPGO_FTP_PORT:-2021}
+      #   published: ${SFTPGO_FTP_PORT:-2021}
+      #   protocol: tcp
+      # - target: 50000
+      #   published: 50000
+      #   protocol: tcp
+    expose:
+      # Web ports reached only through Traefik, never published on the host.
+      - "${SFTPGO_HTTP_PORT:-8080}"
+      - "${SFTPGO_WEBDAV_PORT:-8081}"
+    volumes:
+      # Config dir: sftpgo.json, sqlite/bolt DB, certificates, backups
+      - ${SFTPGO_HOST_CONFIG_DIR:-./data/config}:/var/lib/sftpgo
+      # Served files / user home dirs
+      - ${SFTPGO_HOST_DATA_DIR:-./data/srv}:/srv/sftpgo
+    labels:
+      - traefik.enable=true
+      # --- SFTPGo Web Admin / Client UI + REST API ---
+      - traefik.http.routers.${ROUTER_NAME:-sftpgo}.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}
+      - traefik.http.routers.${ROUTER_NAME:-sftpgo}.rule=Host(`${SFTPGO_HOST:?set SFTPGO_HOST}`)
+      - traefik.http.routers.${ROUTER_NAME:-sftpgo}.service=${ROUTER_NAME:-sftpgo}
+      - traefik.http.routers.${ROUTER_NAME:-sftpgo}.tls=true
+      - traefik.http.routers.${ROUTER_NAME:-sftpgo}.tls.certresolver=${CERT_RESOLVER:-letsencrypt}
+      - traefik.http.routers.${ROUTER_NAME:-sftpgo}.tls.domains[0].main=${SFTPGO_HOST}
+      - traefik.http.services.${ROUTER_NAME:-sftpgo}.loadbalancer.server.port=${SFTPGO_HTTP_PORT:-8080}
+      # NOTE: intentionally NO authelia@docker middleware — the SFTPGo web
+      # admin/client does its own authentication.
+      # --- WebDAV ---
+      - traefik.http.routers.${WEBDAV_ROUTER_NAME:-sftpgo-webdav}.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}
+      - traefik.http.routers.${WEBDAV_ROUTER_NAME:-sftpgo-webdav}.rule=Host(`${SFTPGO_WEBDAV_HOST:?set SFTPGO_WEBDAV_HOST}`)
+      - traefik.http.routers.${WEBDAV_ROUTER_NAME:-sftpgo-webdav}.service=${WEBDAV_ROUTER_NAME:-sftpgo-webdav}
+      - traefik.http.routers.${WEBDAV_ROUTER_NAME:-sftpgo-webdav}.tls=true
+      - traefik.http.routers.${WEBDAV_ROUTER_NAME:-sftpgo-webdav}.tls.certresolver=${CERT_RESOLVER:-letsencrypt}
+      - traefik.http.routers.${WEBDAV_ROUTER_NAME:-sftpgo-webdav}.tls.domains[0].main=${SFTPGO_WEBDAV_HOST}
+      - traefik.http.services.${WEBDAV_ROUTER_NAME:-sftpgo-webdav}.loadbalancer.server.port=${SFTPGO_WEBDAV_PORT:-8081}
+    healthcheck:
+      # Image ships no curl/wget — plain TCP probe against the web UI port
+      # (the default image is Debian-based, so bash /dev/tcp is available).
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/${SFTPGO_HTTP_PORT:-8080}' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    stop_grace_period: 35s # must be >= SFTPGO_GRACE_TIME
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+networks:
+  # External network shared with your existing Traefik stack.
+  # Create once:  docker network create proxy
+  proxy:
+    name: ${TRAEFIK_NETWORK:-proxy}
+    external: true

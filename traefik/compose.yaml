@@ -1,0 +1,134 @@
+services:
+  traefik:
+    image: traefik:v3
+    container_name: traefik
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+    networks:
+      # 'proxy' bridge network shared with all service stacks
+      # (created once: docker network create proxy; declared external here
+      #  and in every service stack so bring-up order doesn't matter)
+      - proxy
+
+    ports:
+      - "80:80"
+      - "443:443"
+
+    environment:
+      # Cloudflare credentials for DNS-01 ACME challenges.
+      # Create a scoped API token: Zone -> DNS -> Edit for your zone(s).
+      CF_DNS_API_TOKEN: ${CF_DNS_API_TOKEN:?set CF_DNS_API_TOKEN in .env}
+      # Optional second token (Zone -> Zone -> Read) if you use a split-token setup
+      CF_ZONE_API_TOKEN: ${CF_ZONE_API_TOKEN:-}
+
+    volumes:
+      # read-only is enough — Traefik only reads container metadata
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${CERTS_DIR:-./certs}:/certs:ro
+      - ${DYNAMIC_DIR:-./dynamic}:/dynamic:ro
+      # ACME certificate store (read-write — Traefik writes letsencrypt.json here)
+      - ${ACME_DIR:-./certs}:/acme
+
+    command:
+      # EntryPoints
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.web.http.redirections.entrypoint.permanent=true"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.websecure.http.tls=true"
+
+      # Internal entrypoint (not published) — metrics attach here by default
+      - "--entrypoints.traefik.address=:8080"
+
+      # Health endpoint used by the container healthcheck below
+      - "--ping=true"
+
+      # Static TLS configuration (certs + TLS options) from /dynamic.
+      # watch=true reloads cert/config changes without restarting the container
+      - "--providers.file.filename=/dynamic/tls.yaml"
+      - "--providers.file.watch=true"
+
+      # Providers
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=proxy"
+
+      # Certificate resolver — Cloudflare DNS-01 (no port-80 challenge needed,
+      # supports wildcards). Resolver name 'letsencrypt' matches the
+      # CERT_RESOLVER default used by the other stacks.
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:?set ACME_EMAIL in .env}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/acme/letsencrypt.json"
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge.provider=cloudflare"
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge.delaybeforecheck=30"
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge.resolvers=1.1.1.1:53,1.0.0.1:53"
+      # Uncomment while testing (avoids LE rate limits), then remove:
+      # - "--certificatesresolvers.letsencrypt.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory"
+
+      # API & Dashboard
+      - "--api.dashboard=true"
+      - "--api.insecure=false"
+
+      # Observability
+      - "--log.level=INFO"
+      - "--accesslog=true"
+      - "--metrics.prometheus=true"
+
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    # Traefik Dynamic configuration via Docker labels
+    labels:
+      # Enable self-routing
+      - "traefik.enable=true"
+
+      # Dashboard router — protected by Authelia's shared forwardAuth
+      # middleware ('authelia@docker', defined in the authelia stack).
+      # Authelia's access-control rules decide who gets in.
+      - "traefik.http.routers.dashboard.rule=Host(`${DASHBOARD_HOST:?set DASHBOARD_HOST in .env}`)"
+      - "traefik.http.routers.dashboard.entrypoints=websecure"
+      - "traefik.http.routers.dashboard.service=api@internal"
+      - "traefik.http.routers.dashboard.tls=true"
+      - "traefik.http.routers.dashboard.tls.certresolver=${CERT_RESOLVER:-letsencrypt}"
+      - "traefik.http.routers.dashboard.tls.domains[0].main=${DASHBOARD_HOST}"
+      - "traefik.http.routers.dashboard.middlewares=authelia@docker"
+
+  # Whoami test application
+  whoami:
+    image: traefik/whoami
+    container_name: whoami
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    networks:
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.whoami.rule=Host(`${WHOAMI_HOST:?set WHOAMI_HOST in .env}`)"
+      - "traefik.http.routers.whoami.entrypoints=websecure"
+      - "traefik.http.routers.whoami.tls=true"
+      - "traefik.http.routers.whoami.tls.certresolver=${CERT_RESOLVER:-letsencrypt}"
+      - "traefik.http.routers.whoami.tls.domains[0].main=${WHOAMI_HOST}"
+      - "traefik.http.routers.whoami.middlewares=authelia@docker"
+
+networks:
+  proxy:
+    name: ${TRAEFIK_NETWORK:-proxy}
+    external: true
