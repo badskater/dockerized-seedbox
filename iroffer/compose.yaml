@@ -1,0 +1,84 @@
+---
+name: iroffer
+
+services:
+  iroffer:
+    # CI-built image from the fork's GitHub Container Registry
+    # (source: github.com/badskater/iroffer-dinoex):
+    #   docker compose pull && docker compose up -d
+    image: ghcr.io/badskater/iroffer-dinoex:${IMAGE_TAG:-latest}
+    container_name: iroffer
+    hostname: iroffer
+    restart: unless-stopped
+    tty: true        # iroffer requires a pseudo-TTY for foreground (-k) mode
+    networks:
+      - proxy
+    # All app configuration comes from .env via env_file
+    env_file:
+      - .env         # all IROFFER_* config-directive variables live here
+    ports:
+      # DCC passive transfer ports — published on the host, Traefik can't
+      # proxy raw DCC TCP. Forward this range on your router/firewall.
+      # Must match PORT_RANGE (or IROFFER_TCPRANGESTART/LIMIT) in .env.
+      - ${PORT_RANGE:-30000-31000}:${PORT_RANGE:-30000-31000}
+    expose:
+      # Built-in webserver (pack list) — reached only through Traefik,
+      # never published on the host. Must match HTTP_PORT in .env.
+      - "${HTTP_PORT:-8080}"
+    volumes:
+      # Bot config (/home/iroffer/config), logs (/home/iroffer/logs),
+      # pack list — mounted as the iroffer home directory
+      - ${CONFIG_DIR:-./config}:/home/iroffer
+      # Shared XDCC files (iroffer's filedir is /data)
+      - ${DATA_DIR:-./files}:/data
+    labels:
+      - traefik.enable=true
+      # --- iroffer built-in webserver (public pack list — no auth by design) ---
+      - traefik.http.routers.${ROUTER_NAME:-iroffer}.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}
+      - traefik.http.routers.${ROUTER_NAME:-iroffer}.rule=Host(`${XDCC_HOST:?set XDCC_HOST}`)
+      - traefik.http.routers.${ROUTER_NAME:-iroffer}.service=${ROUTER_NAME:-iroffer}
+      - traefik.http.routers.${ROUTER_NAME:-iroffer}.tls=true
+      - traefik.http.routers.${ROUTER_NAME:-iroffer}.tls.certresolver=${CERT_RESOLVER:-letsencrypt}
+      - traefik.http.routers.${ROUTER_NAME:-iroffer}.tls.domains[0].main=${XDCC_HOST}
+      - traefik.http.services.${ROUTER_NAME:-iroffer}.loadbalancer.server.port=${HTTP_PORT:-8080}
+      # Intentionally NO authelia middleware: the webserver only serves the
+      # public XDCC pack list. Do NOT enable IROFFER_HTTP_ADMIN in .env
+      # without putting authelia@docker in front of this router first.
+      # (Never leave an EMPTY middlewares label — it errors on Traefik v3.)
+    # ---- Security hardening ----
+    # Drop ALL capabilities; re-add only what the root entrypoint needs to
+    # initialize the mounted volumes and drop privileges to the iroffer user:
+    #   CHOWN/FOWNER - chown/chmod ${CONFIG_DIR}/${DATA_DIR} on first start
+    #   SETUID/SETGID - runuser switch to the unprivileged iroffer user
+    # The bot itself then runs fully unprivileged (no raw sockets, no ports
+    # < 1024). If you set http_port/telnet_port below 1024, additionally
+    # cap_add NET_BIND_SERVICE.
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - FOWNER
+      - SETUID
+      - SETGID
+    healthcheck:
+      # Runtime image has no curl/wget — plain bash TCP probe against the
+      # built-in webserver port (requires HTTP_PORT set in .env).
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/${HTTP_PORT:-8080}' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+networks:
+  # External network shared with your existing Traefik stack.
+  # Create once:  docker network create proxy
+  proxy:
+    name: ${TRAEFIK_NETWORK:-proxy}
+    external: true

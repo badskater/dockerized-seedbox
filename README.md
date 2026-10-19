@@ -17,6 +17,7 @@ Each directory is an independent stack: `cd` into it, copy `.env.example` to
 ├── rutorrent-user1/    # rTorrent + ruTorrent (main instance)
 ├── rutorrent-user2/    # rTorrent + ruTorrent (2nd instance, offset ports)
 ├── sftpgo/              # SFTP / WebDAV / FTP server with web admin
+├── iroffer/             # XDCC IRC bot (iroffer-dinoex) with web pack list
 ├── filezilla/           # FileZilla desktop GUI in the browser (Selkies)
 └── observability/       # Prometheus + Grafana + node-exporter + cAdvisor
 ```
@@ -254,6 +255,7 @@ Same pattern for each: `cp .env.example .env`, edit, `docker compose up -d`.
 | `qbittorrent/` | `SUBDOMAIN` etc. | WebUI router already has `middlewares=authelia@docker`. BT ports are published on the host — forward them on your router. |
 | `rutorrent-user1/` | `RUTORRENT_HOST`, `WEBDAV_HOST`, `XMLRPC_HOST` | Instance 1: BT 50000/tcp + 6881/udp, internal 8000/8080/9000. Optional `geoip` profile service. |
 | `rutorrent-user2/` | same var names | Instance 2, fully renamed and port-shifted: BT **51000/tcp + 6882/udp**, internal 8100/8180/9100. Forward both port pairs separately. |
+| `iroffer/` | `XDCC_HOST` | iroffer-dinoex XDCC bot, image CI-built from `ghcr.io/badskater/iroffer-dinoex`. IRC port + passive range (30000-31000) published on the host — forward them; web pack listing via Traefik. Huge `.env.example` (~940 lines) covers every iroffer setting; defaults work as-is. |
 | `sftpgo/` | `SFTPGO_HOST` | SFTP :2022, WebDAV :8081, web admin via Traefik. Host dirs must be owned by uid/gid 1000 or sqlite crash-loops. Never name compose-only vars `SFTPGO_*` — they'd hijack app config (host paths use `SFTPGO_HOST_*`). |
 | `filezilla/` | `FILEZILLA_HOST` | Browser-streamed desktop GUI. **The in-GUI terminal has passwordless sudo** — put `authelia@docker` in front (strongly recommended) and/or set `CUSTOM_USER`/`PASSWORD`. |
 | `observability/` | `PROM_HOST`, `GRAFANA_HOST` | Prometheus + Grafana + node-exporter + cAdvisor. Comes with a provisioned "Server Overview" Grafana dashboard and a Prometheus datasource (delete-before-recreate provisioning, so edits to the dashboard JSON apply on restart). Point the Grafana datasource at the **internal** Prometheus service name, not the public URL. Needs `--metrics.prometheus.addRoutersLabels=true` in the traefik stack (already enabled) for the per-router panels. |
