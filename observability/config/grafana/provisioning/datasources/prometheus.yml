@@ -1,0 +1,25 @@
+# Auto-provisions the Prometheus datasource so Grafana works out of the box.
+# The fixed uid is referenced by the provisioned dashboards — keep it stable.
+#
+# The URL MUST stay internal (container name on the proxy network). Do NOT
+# point it at https://prometheus.<domain>: Grafana's backend queries would
+# traverse Traefik/Authelia and get 401'd — the portal protects the public
+# hostname for humans; machine traffic goes container-to-container.
+apiVersion: 1
+
+# Delete-before-recreate: Grafana 12/13 refuses to update a datasource whose
+# stored uid differs from the pinned one ("data source not found" crash loop),
+# even after a data-dir wipe on some builds. Deletions are applied before
+# additions on every start, so this keeps provisioning idempotent.
+deleteDatasources:
+  - name: Prometheus
+    orgId: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true

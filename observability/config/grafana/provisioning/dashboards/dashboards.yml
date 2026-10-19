@@ -1,0 +1,15 @@
+# Auto-provisions every dashboard JSON in /etc/grafana/dashboards
+# (mounted read-only from config/grafana/dashboards in the compose file).
+apiVersion: 1
+
+providers:
+  - name: observability
+    orgId: 1
+    folder: ""
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 60
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: false

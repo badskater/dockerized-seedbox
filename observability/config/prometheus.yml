@@ -1,0 +1,28 @@
+# Prometheus scrape config for the observability stack.
+# All targets resolve by container name on the shared 'proxy' network.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Prometheus itself
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Host metrics (CPU, memory, disk, filesystem, network)
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  # Per-container metrics (CPU, memory, network, fs for every container)
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8081"]
+
+  # Traefik router/entrypoint/service metrics — served on its internal
+  # 'traefik' entrypoint (:8080), which is NOT host-published but is
+  # reachable from any container on the proxy network.
+  - job_name: traefik
+    static_configs:
+      - targets: ["traefik:8080"]

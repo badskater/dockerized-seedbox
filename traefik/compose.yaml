@@ -50,6 +50,9 @@ services:
 
       # Health endpoint used by the container healthcheck below
       - "--ping=true"
+      # Router-level metrics are OFF by default in v3 — required for the
+      # per-router panels in the Grafana Server Overview dashboard.
+      - "--metrics.prometheus.addRoutersLabels=true"
 
       # Static TLS configuration (certs + TLS options) from /dynamic.
       # watch=true reloads cert/config changes without restarting the container

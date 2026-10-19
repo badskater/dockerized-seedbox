@@ -1,0 +1,170 @@
+# Observability stack: Prometheus + Grafana + node-exporter + cAdvisor.
+# Scrapes the host (node-exporter), every container (cAdvisor) and Traefik
+# (its Prometheus metrics already serve on the internal :8080 entrypoint).
+# Grafana and the Prometheus UI are routed through Traefik and protected by
+# the shared Authelia forwardAuth middleware.
+---
+name: observability
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    container_name: prometheus
+    hostname: prometheus
+    restart: unless-stopped
+    networks:
+      - proxy
+    env_file:
+      - .env
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=${PROM_RETENTION:-15d}"
+      - "--web.listen-address=:${PROM_PORT:-9090}"
+      - "--web.external-url=https://${PROM_HOST}"
+    # UI reached only through Traefik, never published on the host.
+    expose:
+      - "${PROM_PORT:-9090}"
+    volumes:
+      - ${CONFIG_DIR:-./config}/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ${DATA_DIR:-./data}/prometheus:/prometheus
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.${PROM_ROUTER:-prometheus}.rule=Host(`${PROM_HOST:?set PROM_HOST in .env}`)"
+      - "traefik.http.routers.${PROM_ROUTER:-prometheus}.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+      - "traefik.http.routers.${PROM_ROUTER:-prometheus}.service=${PROM_ROUTER:-prometheus}"
+      - "traefik.http.routers.${PROM_ROUTER:-prometheus}.tls=true"
+      - "traefik.http.routers.${PROM_ROUTER:-prometheus}.tls.certresolver=${CERT_RESOLVER:-letsencrypt}"
+      - "traefik.http.routers.${PROM_ROUTER:-prometheus}.tls.domains[0].main=${PROM_HOST}"
+      - "traefik.http.routers.${PROM_ROUTER:-prometheus}.middlewares=authelia@docker"
+      - "traefik.http.services.${PROM_ROUTER:-prometheus}.loadbalancer.server.port=${PROM_PORT:-9090}"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:${PROM_PORT:-9090}/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  grafana:
+    image: grafana/grafana:13.2.4
+    container_name: grafana
+    hostname: grafana
+    restart: unless-stopped
+    networks:
+      - proxy
+    # All Grafana config (GF_*) comes from .env via env_file
+    env_file:
+      - .env
+    expose:
+      - "${GRAFANA_PORT:-3000}"
+    volumes:
+      - ${DATA_DIR:-./data}/grafana:/var/lib/grafana
+      - ${CONFIG_DIR:-./config}/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ${CONFIG_DIR:-./config}/grafana/dashboards:/etc/grafana/dashboards:ro
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.${GRAFANA_ROUTER:-grafana}.rule=Host(`${GRAFANA_HOST:?set GRAFANA_HOST in .env}`)"
+      - "traefik.http.routers.${GRAFANA_ROUTER:-grafana}.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+      - "traefik.http.routers.${GRAFANA_ROUTER:-grafana}.service=${GRAFANA_ROUTER:-grafana}"
+      - "traefik.http.routers.${GRAFANA_ROUTER:-grafana}.tls=true"
+      - "traefik.http.routers.${GRAFANA_ROUTER:-grafana}.tls.certresolver=${CERT_RESOLVER:-letsencrypt}"
+      - "traefik.http.routers.${GRAFANA_ROUTER:-grafana}.tls.domains[0].main=${GRAFANA_HOST}"
+      - "traefik.http.routers.${GRAFANA_ROUTER:-grafana}.middlewares=authelia@docker"
+      - "traefik.http.services.${GRAFANA_ROUTER:-grafana}.loadbalancer.server.port=${GRAFANA_PORT:-3000}"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:${GRAFANA_PORT:-3000}/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  node-exporter:
+    image: prom/node-exporter:v1.12.1
+    container_name: node-exporter
+    hostname: node-exporter
+    restart: unless-stopped
+    networks:
+      - proxy
+    # Host PID namespace + host rootfs (read-only) so it reports real host
+    # CPU/memory/disk/filesystem metrics, not the container's own view.
+    pid: host
+    command:
+      - "--path.rootfs=/host"
+      - "--web.listen-address=:${NODE_EXPORTER_PORT:-9100}"
+    expose:
+      - "${NODE_EXPORTER_PORT:-9100}"
+    volumes:
+      - /:/host:ro,rslave
+    # node_exporter serves no /-/healthy endpoint — probe the landing page.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:${NODE_EXPORTER_PORT:-9100}/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.60.6
+    container_name: cadvisor
+    hostname: cadvisor
+    restart: unless-stopped
+    networks:
+      - proxy
+    command:
+      - "-port=${CADVISOR_PORT:-8081}"
+      - "-housekeeping_interval=${CADVISOR_INTERVAL:-15s}"
+      - "-docker_only=true"
+    # The image's built-in healthcheck probes $CADVISOR_HEALTHCHECK_URL
+    # (default http://localhost:8080/healthz) — it must match -port or the
+    # container reports unhealthy while serving fine.
+    environment:
+      CADVISOR_HEALTHCHECK_URL: http://localhost:${CADVISOR_PORT:-8081}/healthz
+    expose:
+      - "${CADVISOR_PORT:-8081}"
+    devices:
+      - /dev/kmsg
+    # Read-only views of the host's cgroups/docker state — this is how
+    # per-container CPU/memory/network/disk metrics are collected.
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    # Healthcheck comes from the image (Alpine wget against /healthz);
+    # the URL is retargeted above to our -port.
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+networks:
+  # External network shared with the existing Traefik stack.
+  # Create once:  docker network create proxy
+  proxy:
+    name: ${TRAEFIK_NETWORK:-proxy}
+    external: true
