@@ -4,9 +4,9 @@ name: iroffer
 services:
   iroffer:
     # CI-built image from the fork's GitHub Container Registry
-    # (source: github.com/badskater/iroffer-dinoex):
+    # (source: github.com/jenga201/iroffer-dinoex):
     #   docker compose pull && docker compose up -d
-    image: ghcr.io/badskater/iroffer-dinoex:${IMAGE_TAG:-latest}
+    image: ghcr.io/jenga201/iroffer-dinoex:${IMAGE_TAG:-latest}
     container_name: iroffer
     hostname: iroffer
     restart: unless-stopped
